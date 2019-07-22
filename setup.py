@@ -125,6 +125,7 @@ class BuildExt(build_ext):
             else:
                 opts.append('-march=native')
                 opts.append('-ffast-math')
+                opts.append('-fivopts')
 
         opts.append(openmp)
         if ct == 'unix':

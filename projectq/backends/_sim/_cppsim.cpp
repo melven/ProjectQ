@@ -26,7 +26,7 @@
 namespace py = pybind11;
 
 using c_type = std::complex<double>;
-using ArrayType = std::vector<c_type, aligned_allocator<c_type,64>>;
+using ArrayType = std::vector<c_type, aligned_allocator<c_type,512>>;
 using MatrixType = std::vector<ArrayType>;
 using QuRegs = std::vector<std::vector<unsigned>>;
 

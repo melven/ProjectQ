@@ -54,6 +54,73 @@ inline void kernel_core(V &psi, std::size_t I, std::size_t d0, __m256d m0, __m25
   _mm_store_pd(psiId0, new_v1);
 }
 
+template <class V>
+inline void kernel_core1(V &psi, std::size_t I, __m256d m0, __m256d m1, __m256d m2, __m256d m3)
+{
+  // d0 == 1
+  double* psiI = (double*)&(psi[I]);
+  double* psiId0 = (double*)&(psi[I+1]);
+  __m256d v0r = _mm256_broadcast_sd(psiI);
+  __m256d v0i = _mm256_broadcast_sd(psiI+1);
+  __m256d v1r = _mm256_broadcast_sd(psiId0);
+  __m256d v1i = _mm256_broadcast_sd(psiId0+1);
+
+  __m256d tmp1 = _mm256_mul_pd(v0r, m0);
+  __m256d tmp2 = _mm256_mul_pd(v0i, m1);
+  __m256d tmp3 = _mm256_fmadd_pd(v1r, m2, tmp1);
+  __m256d tmp4 = _mm256_fmadd_pd(v1i, m3, tmp2);
+  __m256d tmp5 = _mm256_add_pd(tmp3, tmp4);
+
+  _mm256_store_pd(psiI, tmp5);
+}
+
+template <class V>
+inline void kernel_core_unroll2(V &psi, std::size_t I, std::size_t d0, __m256d m0, __m256d m1, __m256d m2, __m256d m3)
+{
+  // d0 > 1, so we do two iterations at once!
+  // tell the compiler that d0 > 0
+  if( d0 <= 1 )
+    return;
+
+  // first iteration
+  double* psiI = (double*)&(psi[I]);
+  double* psiId0 = (double*)&(psi[I+d0]);
+  __m256d v0r = _mm256_broadcast_sd(psiI);
+  __m256d v0i = _mm256_broadcast_sd(psiI+1);
+  __m256d v1r = _mm256_broadcast_sd(psiId0);
+  __m256d v1i = _mm256_broadcast_sd(psiId0+1);
+
+  __m256d tmp1 = _mm256_mul_pd(v0r, m0);
+  __m256d tmp2 = _mm256_mul_pd(v0i, m1);
+  __m256d tmp3 = _mm256_fmadd_pd(v1r, m2, tmp1);
+  __m256d tmp4 = _mm256_fmadd_pd(v1i, m3, tmp2);
+  __m256d result1 = _mm256_add_pd(tmp3, tmp4);
+
+  // second iteration
+  v0r = _mm256_broadcast_sd(psiI+2);
+  v0i = _mm256_broadcast_sd(psiI+3);
+  v1r = _mm256_broadcast_sd(psiId0+2);
+  v1i = _mm256_broadcast_sd(psiId0+3);
+
+  tmp1 = _mm256_mul_pd(v0r, m0);
+  tmp2 = _mm256_mul_pd(v0i, m1);
+  tmp3 = _mm256_fmadd_pd(v1r, m2, tmp1);
+  tmp4 = _mm256_fmadd_pd(v1i, m3, tmp2);
+  __m256d result2 = _mm256_add_pd(tmp3, tmp4);
+
+  __m128d new_v00 = _mm256_extractf128_pd(result1, 0);
+  __m128d new_v01 = _mm256_extractf128_pd(result1, 1);
+  __m128d new_v10 = _mm256_extractf128_pd(result2, 0);
+  __m128d new_v11 = _mm256_extractf128_pd(result2, 1);
+
+  __m256d new_v0 = _mm256_set_m128d(new_v10, new_v00);
+  __m256d new_v1 = _mm256_set_m128d(new_v11, new_v01);
+
+  _mm256_store_pd(psiI, new_v0);
+  _mm256_store_pd(psiId0, new_v1);
+}
+
+
 // bit indices id[.] are given from high to low (e.g. control first for CNOT)
 template <class V, class M>
 void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
@@ -83,7 +150,7 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
       for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
       {
         std::size_t i0 = iOuter * 2;
-        kernel_core(psi, i0, 1, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        kernel_core1(psi, i0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
       }
     }
     else if (d0 == 2)
@@ -92,8 +159,8 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
       for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
       {
         std::size_t i0 = iOuter * 4;
-        kernel_core(psi, i0+0, 2, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-        kernel_core(psi, i0+1, 2, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        kernel_core_unroll2(psi, i0+0, 2, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        //kernel_core(psi, i0+1, 2, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
       }
     }
     else if (d0 == 4)
@@ -102,10 +169,10 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
       for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
       {
         std::size_t i0 = iOuter * 8;
-        kernel_core(psi, i0+0, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-        kernel_core(psi, i0+1, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-        kernel_core(psi, i0+2, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-        kernel_core(psi, i0+3, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        kernel_core_unroll2(psi, i0+0, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        //kernel_core(psi, i0+1, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        kernel_core_unroll2(psi, i0+2, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        //kernel_core(psi, i0+3, 4, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
       }
     }
     else // at least 8
@@ -117,14 +184,14 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
         {
           std::size_t i0 = iOuter * 2*d0;
           std::size_t i1 = iInner * 8;
-          kernel_core(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          kernel_core_unroll2(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          //kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          kernel_core_unroll2(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          //kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          kernel_core_unroll2(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          //kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          kernel_core_unroll2(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          //kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
         }
     }
   }
@@ -137,7 +204,7 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
       for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
       {
         std::size_t i0 = iOuter * 2;
-        if ( (i0 & ctrlmask) == ctrlmask) kernel_core(psi, i0, 1, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+        if ( (i0 & ctrlmask) == ctrlmask) kernel_core1(psi, i0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
       }
     }
     else if (d0 == 2)
@@ -182,14 +249,14 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
             for (std::size_t iInner = 0; iInner < nInner; iInner++)
             {
               std::size_t i1 = iInner * 8;
-              kernel_core(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
             }
           }
         }
@@ -206,21 +273,21 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
             for (std::size_t iInner = 0; iInner < nInner; iInner++)
             {
               std::size_t i1 = iInner * 8;
-              kernel_core(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-              kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              kernel_core_unroll2(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+              //kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
             }
           }
         }
       }
       else // generic variant
       {
-#pragma omp for collapse(2) schedule(guided)
+#pragma omp for collapse(2) schedule(static)
         for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
           for (std::size_t iInner = 0; iInner < nInner; iInner++)
           {

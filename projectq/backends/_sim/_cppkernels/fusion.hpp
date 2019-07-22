@@ -27,7 +27,7 @@ public:
     using Index = unsigned;
     using IndexVector = std::vector<Index>;
     using Complex = std::complex<double>;
-    using Matrix = std::vector<std::vector<Complex, aligned_allocator<Complex, 64>>>;
+    using Matrix = std::vector<std::vector<Complex, aligned_allocator<Complex, 512>>>;
     Item(Matrix mat, IndexVector idx) : mat_(mat), idx_(idx) {}
     Matrix& get_matrix() { return mat_; }
     IndexVector& get_indices() { return idx_; }
@@ -42,7 +42,7 @@ public:
     using IndexSet = std::set<Index>;
     using IndexVector = std::vector<Index>;
     using Complex = std::complex<double>;
-    using Matrix = std::vector<std::vector<Complex, aligned_allocator<Complex, 64>>>;
+    using Matrix = std::vector<std::vector<Complex, aligned_allocator<Complex, 512>>>;
     using ItemVector = std::vector<Item>;
 
     unsigned num_qubits() {
@@ -67,7 +67,7 @@ public:
             index_list.push_back(idx);
 
         std::size_t N = num_qubits();
-        fused_matrix = Matrix(1UL<<N, std::vector<Complex, aligned_allocator<Complex, 64>>(1UL<<N));
+        fused_matrix = Matrix(1UL<<N, std::vector<Complex, aligned_allocator<Complex, 512>>(1UL<<N));
         auto &M = fused_matrix;
 
         for (std::size_t i = 0; i < (1UL<<N); ++i)
@@ -114,7 +114,7 @@ private:
         indexList.insert(indexList.end(), new_ctrls.begin(), new_ctrls.end());
 
         std::size_t F = (1UL << new_ctrls.size());
-        Matrix newmatrix(F*matrix.size(), std::vector<Complex, aligned_allocator<Complex,64>>(F*matrix.size(), 0.));
+        Matrix newmatrix(F*matrix.size(), std::vector<Complex, aligned_allocator<Complex,512>>(F*matrix.size(), 0.));
 
         std::size_t Offset = newmatrix.size()-matrix.size();
 
