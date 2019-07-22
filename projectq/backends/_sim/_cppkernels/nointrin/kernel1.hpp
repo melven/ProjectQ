@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-template <class V, class M>
-inline void kernel_core(V &psi, std::size_t I, std::size_t d0, M const& m)
+inline void kernel_core(std::complex<double>* psi, std::size_t I, std::size_t d0, std::complex<double> m[2][2])
 {
     std::complex<double> v[2];
     v[0] = psi[I];
@@ -28,25 +27,33 @@ inline void kernel_core(V &psi, std::size_t I, std::size_t d0, M const& m)
 template <class V, class M>
 void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
 {
-    std::size_t n = psi.size();
-    std::size_t d0 = 1UL << id0;
-    std::size_t dsorted[] = {d0 };
-    std::sort(dsorted, dsorted + 1, std::greater<std::size_t>());
+    const std::size_t n = psi.size();
+    const std::size_t d0 = 1UL << id0;
+    // let compiler know m and psi do not alias
+    std::complex<double> tmpM[2][2];
+    tmpM[0][0] = m[0][0];
+    tmpM[1][0] = m[1][0];
+    tmpM[0][1] = m[0][1];
+    tmpM[1][1] = m[1][1];
+    // calculate number of iterations
+    const std::size_t nOuter = n / (2*d0);
+    std::complex<double>* psiData = psi.data();
 
     if (ctrlmask == 0){
-        #pragma omp for collapse(LOOP_COLLAPSE1) schedule(static)
-        for (std::size_t i0 = 0; i0 < n; i0 += 2 * dsorted[0]){
-            for (std::size_t i1 = 0; i1 < dsorted[0]; ++i1){
-                kernel_core(psi, i0 + i1, d0, m);
+        #pragma omp parallel for schedule(static) if(n>1000)
+        for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
+            for (std::size_t i1 = 0; i1 < d0; ++i1){
+                std::size_t i0 = iOuter * 2*d0;
+                kernel_core(psiData, i0 + i1, d0, tmpM);
             }
-        }
     }
     else{
-        #pragma omp for collapse(LOOP_COLLAPSE1) schedule(static)
-        for (std::size_t i0 = 0; i0 < n; i0 += 2 * dsorted[0]){
-            for (std::size_t i1 = 0; i1 < dsorted[0]; ++i1){
+        #pragma omp parallel for schedule(static) if(n>1000)
+        for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++){
+            std::size_t i0 = iOuter * 2*d0;
+            for (std::size_t i1 = 0; i1 < d0; ++i1){
                 if (((i0 + i1)&ctrlmask) == ctrlmask)
-                    kernel_core(psi, i0 + i1, d0, m);
+                    kernel_core(psiData, i0 + i1, d0, tmpM);
             }
         }
     }

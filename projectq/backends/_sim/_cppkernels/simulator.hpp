@@ -56,7 +56,7 @@ public:
         if (map_.count(id) == 0){
             map_[id] = N_++;
             auto newvec = StateVector(1UL << N_);
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(0)
             for (std::size_t i = 0; i < newvec.size(); ++i)
                 newvec[i] = (i < vec_.size())?vec_[i]:0.;
             vec_ = std::move(newvec);
@@ -89,7 +89,7 @@ public:
         std::size_t delta = (1UL << pos);
 
         short up = 0, down = 0;
-        #pragma omp parallel for schedule(static) reduction(|:up,down)
+        #pragma omp parallel for schedule(static) reduction(|:up,down) if(0)
         for (std::size_t i = 0; i < vec_.size(); i += 2*delta){
             for (std::size_t j = 0; j < delta; ++j){
                 up = up | ((std::norm(vec_[i+j]) > tol)&1);
@@ -106,7 +106,7 @@ public:
         std::size_t delta = (1UL << pos);
 
         if (!shrink){
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(0)
             for (std::size_t i = 0; i < vec_.size(); i += 2*delta){
                 for (std::size_t j = 0; j < delta; ++j)
                     vec_[i+j+static_cast<std::size_t>(!value)*delta] = 0.;
@@ -114,7 +114,7 @@ public:
         }
         else{
             StateVector newvec((1UL << (N_-1)));
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(0)
             for (std::size_t i = 0; i < vec_.size(); i += 2*delta)
                 std::copy_n(&vec_[i + static_cast<std::size_t>(value)*delta],
                             delta, &newvec[i/2]);
@@ -158,7 +158,7 @@ public:
         }
         // set bad entries to 0
         calc_type N = 0.;
-        #pragma omp parallel for reduction(+:N) schedule(static)
+        #pragma omp parallel for reduction(+:N) schedule(static) if(0)
         for (std::size_t i = 0; i < vec_.size(); ++i){
             if ((i & mask) != val)
                 vec_[i] = 0.;
@@ -167,7 +167,7 @@ public:
         }
         // re-normalize
         N = 1./std::sqrt(N);
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(0)
         for (std::size_t i = 0; i < vec_.size(); ++i)
             vec_[i] *= N;
     }
@@ -209,8 +209,8 @@ public:
     }
 
     template <class F, class QuReg>
-    void emulate_math(F const& f, QuReg quregs, std::vector<unsigned> ctrl,
-                      unsigned num_threads=1){
+    void emulate_math(F const& f, QuReg quregs, const std::vector<unsigned>& ctrl,
+                      bool parallelize = false){
         run();
         auto ctrlmask = get_control_mask(ctrl);
 
@@ -219,30 +219,54 @@ public:
                 quregs[i][j] = map_[quregs[i][j]];
 
         StateVector newvec(vec_.size(), 0.);
-        std::vector<int> res(quregs.size());
 
-        #pragma omp parallel for schedule(static) firstprivate(res) num_threads(num_threads)
-        for (std::size_t i = 0; i < vec_.size(); ++i){
-            if ((ctrlmask&i) == ctrlmask){
-                for (unsigned qr_i = 0; qr_i < quregs.size(); ++qr_i){
-                    res[qr_i] = 0;
-                    for (unsigned qb_i = 0; qb_i < quregs[qr_i].size(); ++qb_i)
-                        res[qr_i] |= ((i >> quregs[qr_i][qb_i])&1) << qb_i;
-                }
-                f(res);
-                auto new_i = i;
-                for (unsigned qr_i = 0; qr_i < quregs.size(); ++qr_i){
-                    for (unsigned qb_i = 0; qb_i < quregs[qr_i].size(); ++qb_i){
-                        if (!(((new_i >> quregs[qr_i][qb_i])&1) == ((res[qr_i] >> qb_i)&1)))
-                            new_i ^= (1UL << quregs[qr_i][qb_i]);
-                    }
-                }
-                newvec[new_i] += vec_[i];
-            }
-            else
-                newvec[i] += vec_[i];
+//#pragma omp parallel reduction(+:newvec) if(parallelize)
+        {
+          std::vector<int> res(quregs.size());
+          //#pragma omp for schedule(static)
+          for (std::size_t i = 0; i < vec_.size(); ++i){
+              if ((ctrlmask&i) == ctrlmask){
+                  for (unsigned qr_i = 0; qr_i < quregs.size(); ++qr_i){
+                      res[qr_i] = 0;
+                      for (unsigned qb_i = 0; qb_i < quregs[qr_i].size(); ++qb_i)
+                          res[qr_i] |= ((i >> quregs[qr_i][qb_i])&1) << qb_i;
+                  }
+                  f(res);
+                  auto new_i = i;
+                  for (unsigned qr_i = 0; qr_i < quregs.size(); ++qr_i){
+                      for (unsigned qb_i = 0; qb_i < quregs[qr_i].size(); ++qb_i){
+                          if (!(((new_i >> quregs[qr_i][qb_i])&1) == ((res[qr_i] >> qb_i)&1)))
+                              new_i ^= (1UL << quregs[qr_i][qb_i]);
+                      }
+                  }
+                  newvec[new_i] += vec_[i];
+              }
+              else
+                  newvec[i] += vec_[i];
+          }
         }
         vec_ = std::move(newvec);
+    }
+
+    // faster version without calling python 
+    template<class QuReg>
+    inline void emulate_math_addConstant(int a, const QuReg& quregs, const std::vector<unsigned>& ctrl)
+    {
+      emulate_math([a](std::vector<int> &res){for(auto& x: res) x = x + a;}, quregs, ctrl);
+    }
+
+    // faster version without calling python 
+    template<class QuReg>
+    inline void emulate_math_addConstantModN(int a, int N, const QuReg& quregs, const std::vector<unsigned>& ctrl)
+    {
+      emulate_math([a,N](std::vector<int> &res){for(auto& x: res) x = (x + a) % N;}, quregs, ctrl);
+    }
+
+    // faster version without calling python 
+    template<class QuReg>
+    inline void emulate_math_multiplyByConstantModN(int a, int N, const QuReg& quregs, const std::vector<unsigned>& ctrl)
+    {
+      emulate_math([a,N](std::vector<int> &res){for(auto& x: res) x = (x * a) % N;}, quregs, ctrl);
     }
 
     calc_type get_expectation_value(TermsDict const& td, std::vector<unsigned> const& ids){
@@ -253,7 +277,7 @@ public:
             auto const& coefficient = term.second;
             apply_term(term.first, ids, {});
             calc_type delta = 0.;
-            #pragma omp parallel for reduction(+:delta) schedule(static)
+            #pragma omp parallel for reduction(+:delta) schedule(static) if(0)
             for (std::size_t i = 0; i < vec_.size(); ++i){
                 auto const a1 = std::real(current_state[i]);
                 auto const b1 = -std::imag(current_state[i]);
@@ -274,7 +298,7 @@ public:
         for (auto const& term : td){
             auto const& coefficient = term.second;
             apply_term(term.first, ids, {});
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(0)
             for (std::size_t i = 0; i < vec_.size(); ++i){
                 new_state[i] += coefficient * vec_[i];
                 vec_[i] = current_state[i];
@@ -294,7 +318,7 @@ public:
             bit_str |= (bit_string[i]?1UL:0UL) << map_[ids[i]];
         }
         calc_type probability = 0.;
-        #pragma omp parallel for reduction(+:probability) schedule(static)
+        #pragma omp parallel for reduction(+:probability) schedule(static) if(0)
         for (std::size_t i = 0; i < vec_.size(); ++i)
             if ((i & mask) == bit_str)
                 probability += std::norm(vec_[i]);
@@ -344,14 +368,14 @@ public:
                 auto update = StateVector(vec_.size(), 0.);
                 for (auto const& tup : td){
                     apply_term(tup.first, ids, {});
-                    #pragma omp parallel for schedule(static)
+                    #pragma omp parallel for schedule(static) if(0)
                     for (std::size_t j = 0; j < vec_.size(); ++j){
                         update[j] += vec_[j] * tup.second;
                         vec_[j] = current_state[j];
                     }
                 }
                 nrm_change = 0.;
-                #pragma omp parallel for reduction(+:nrm_change) schedule(static)
+                #pragma omp parallel for reduction(+:nrm_change) schedule(static) if(0)
                 for (std::size_t j = 0; j < vec_.size(); ++j){
                     update[j] *= coeff;
                     vec_[j] = update[j];
@@ -362,7 +386,7 @@ public:
                 }
                 nrm_change = std::sqrt(nrm_change);
             }
-            #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static) if(0)
             for (std::size_t j = 0; j < vec_.size(); ++j){
                 if ((j & ctrlmask) == ctrlmask)
                     output_state[j] *= correction;
@@ -382,7 +406,7 @@ public:
         // set mapping and wavefunction
         for (unsigned i = 0; i < ordering.size(); ++i)
             map_[ordering[i]] = i;
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(0)
         for (std::size_t i = 0; i < wavefunction.size(); ++i)
             vec_[i] = wavefunction[i];
     }
@@ -399,7 +423,7 @@ public:
         }
         // set bad entries to 0 and compute probability of outcome to renormalize
         calc_type N = 0.;
-        #pragma omp parallel for reduction(+:N) schedule(static)
+        #pragma omp parallel for reduction(+:N) schedule(static) if(0)
         for (std::size_t i = 0; i < vec_.size(); ++i){
             if ((i & mask) == val)
                 N += std::norm(vec_[i]);
@@ -408,7 +432,7 @@ public:
             throw(std::runtime_error("collapse_wavefunction(): Invalid collapse! Probability is ~0."));
         // re-normalize (if possible)
         N = 1./std::sqrt(N);
-        #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(static) if(0)
         for (std::size_t i = 0; i < vec_.size(); ++i){
             if ((i & mask) != val)
                 vec_[i] = 0.;

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from __future__ import print_function
 
 import math
@@ -117,13 +118,17 @@ if __name__ == "__main__":
     eng = MainEngine(Simulator(), compilerengines)
 
     # print welcome message and ask the user for the number to factor
-    print("\n\t\033[37mprojectq\033[0m\n\t--------\n\tImplementation of Shor"
-          "\'s algorithm.", end="")
-    N = int(input('\n\tNumber to factor: '))
+    #print("\n\t\033[37mprojectq\033[0m\n\t--------\n\tImplementation of Shor"
+    #      "\'s algorithm.", end="")
+    #N = int(input('\n\tNumber to factor: '))
+    N = 11*17
+    #N = 13*73
+    N = 13*23
     print("\n\tFactoring N = {}: \033[0m".format(N), end="")
 
     # choose a base at random:
-    a = int(random.random()*N)
+    #a = int(random.random()*N)
+    a = 100
     if not gcd(a, N) == 1:
         print("\n\n\t\033[92mOoops, we were lucky: Chose non relative prime"
               " by accident :)")
