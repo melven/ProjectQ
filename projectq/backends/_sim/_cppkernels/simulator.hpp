@@ -55,11 +55,18 @@ public:
     void allocate_qubit(unsigned id){
         if (map_.count(id) == 0){
             map_[id] = N_++;
-            auto newvec = StateVector(1UL << N_);
-            #pragma omp parallel for schedule(static) if(0)
+            StateVector newvec; // avoid large memory allocations
+            if( tmpBuff1_.capacity() >= (1UL << N_) )
+              std::swap(newvec, tmpBuff1_);
+            newvec.resize(1UL << N_);
+#pragma omp parallel for schedule(static)
             for (std::size_t i = 0; i < newvec.size(); ++i)
                 newvec[i] = (i < vec_.size())?vec_[i]:0.;
-            vec_ = std::move(newvec);
+            std::swap(vec_, newvec);
+            // recycle large memory
+            std::swap(tmpBuff1_, newvec);
+            if( tmpBuff1_.capacity() < tmpBuff2_.capacity() )
+              std::swap(tmpBuff1_, tmpBuff2_);
         }
         else
             throw(std::runtime_error(
@@ -113,12 +120,18 @@ public:
             }
         }
         else{
-            StateVector newvec((1UL << (N_-1)));
+            StateVector newvec; // avoid costly memory reallocations
+            if( tmpBuff1_.capacity() >= (1UL << (N_-1)) )
+              std::swap(tmpBuff1_, newvec);
+            newvec.resize((1UL << (N_-1)));
             #pragma omp parallel for schedule(static) if(0)
             for (std::size_t i = 0; i < vec_.size(); i += 2*delta)
                 std::copy_n(&vec_[i + static_cast<std::size_t>(value)*delta],
                             delta, &newvec[i/2]);
-            vec_ = std::move(newvec);
+            std::swap(vec_, newvec);
+            std::swap(tmpBuff1_, newvec);
+            if( tmpBuff1_.capacity() < tmpBuff2_.capacity() )
+              std::swap(tmpBuff1_, tmpBuff2_);
 
             for (auto& p : map_){
                 if (p.second > pos)
@@ -141,8 +154,11 @@ public:
 
         // pick entry at random with probability |entry|^2
         std::size_t pick = 0;
+#pragma omp parallel if(0)
+{
         while (P < rnd && pick < vec_.size())
             P += std::norm(vec_[pick++]);
+}
 
         pick--;
         // determine result vector (boolean values for each qubit)
@@ -189,8 +205,8 @@ public:
     }
 
     template <class M>
-    void apply_controlled_gate(M const& m, std::vector<unsigned> ids,
-                               std::vector<unsigned> ctrl){
+    void apply_controlled_gate(M const& m, const std::vector<unsigned>& ids,
+                               const std::vector<unsigned>& ctrl){
         auto fused_gates = fused_gates_;
         fused_gates.insert(m, ids, ctrl);
 
@@ -218,7 +234,13 @@ public:
             for (unsigned j = 0; j < quregs[i].size(); ++j)
                 quregs[i][j] = map_[quregs[i][j]];
 
-        StateVector newvec(vec_.size(), 0.);
+        StateVector newvec; // avoid costly memory reallocations
+        if( tmpBuff1_.capacity() >= vec_.size() )
+          std::swap(newvec, tmpBuff1_);
+        newvec.resize(vec_.size());
+#pragma omp parallel for schedule(static)
+        for (std::size_t i = 0; i < vec_.size(); i++)
+          newvec[i] = 0;
 
 //#pragma omp parallel reduction(+:newvec) if(parallelize)
         {
@@ -245,7 +267,8 @@ public:
                   newvec[i] += vec_[i];
           }
         }
-        vec_ = std::move(newvec);
+        std::swap(vec_, newvec);
+        std::swap(tmpBuff1_, newvec);
     }
 
     // faster version without calling python 
@@ -272,12 +295,20 @@ public:
     calc_type get_expectation_value(TermsDict const& td, std::vector<unsigned> const& ids){
         run();
         calc_type expectation = 0.;
-        const auto current_state = vec_;
+
+        StateVector current_state; // avoid costly memory reallocations
+        if( tmpBuff1_.capacity() >= vec_.size() )
+          std::swap(tmpBuff1_, current_state);
+        current_state.resize(vec_.size());
+#pragma omp parallel for schedule(static)
+        for (std::size_t i = 0; i < vec_.size(); ++i)
+          current_state[i] = vec_[i];
+
         for (auto const& term : td){
             auto const& coefficient = term.second;
             apply_term(term.first, ids, {});
             calc_type delta = 0.;
-            #pragma omp parallel for reduction(+:delta) schedule(static)
+#pragma omp parallel for reduction(+:delta) schedule(static)
             for (std::size_t i = 0; i < vec_.size(); ++i){
                 auto const a1 = std::real(current_state[i]);
                 auto const b1 = -std::imag(current_state[i]);
@@ -289,13 +320,24 @@ public:
             }
             expectation += coefficient * delta;
         }
+        std::swap(current_state, tmpBuff1_);
         return expectation;
     }
 
     void apply_qubit_operator(ComplexTermsDict const& td, std::vector<unsigned> const& ids){
         run();
-        auto new_state = StateVector(vec_.size(), 0.);
-        auto current_state = vec_;
+        StateVector new_state, current_state; // avoid costly memory reallocations
+        if( tmpBuff1_.capacity() >= vec_.size() )
+          std::swap(tmpBuff1_, new_state);
+        if( tmpBuff2_.capacity() >= vec_.size() )
+          std::swap(tmpBuff2_, current_state);
+        new_state.resize(vec_.size());
+        current_state.resize(vec_.size());
+#pragma omp parallel for schedule(static)
+        for (std::size_t i = 0; i < vec_.size(); ++i){
+          new_state[i] = 0;
+          current_state[i] = vec_[i];
+        }
         for (auto const& term : td){
             auto const& coefficient = term.second;
             apply_term(term.first, ids, {});
@@ -305,7 +347,9 @@ public:
                 vec_[i] = current_state[i];
             }
         }
-        vec_ = std::move(new_state);
+        std::swap(vec_, new_state);
+        std::swap(tmpBuff1_, new_state);
+        std::swap(tmpBuff2_, current_state);
     }
 
     calc_type get_probability(std::vector<bool> const& bit_string,
@@ -477,6 +521,8 @@ public:
                 #pragma omp parallel
                 kernel(vec_, ids[4], ids[3], ids[2], ids[1], ids[0], m, ctrlmask);
                 break;
+            default:
+                throw std::invalid_argument("Gates with more than 5 qubits are not supported!");
         }
 
         fused_gates_ = Fusion();
@@ -525,6 +571,12 @@ private:
     unsigned fusion_qubits_min_, fusion_qubits_max_;
     RndEngine rnd_eng_;
     std::function<double()> rng_;
+
+    // large array buffers to avoid costly reallocations
+    static StateVector tmpBuff1_, tmpBuff2_;
 };
+
+Simulator::StateVector Simulator::tmpBuff1_;
+Simulator::StateVector Simulator::tmpBuff2_;
 
 #endif
