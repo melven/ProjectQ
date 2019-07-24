@@ -158,7 +158,7 @@ public:
         }
         // set bad entries to 0
         calc_type N = 0.;
-        #pragma omp parallel for reduction(+:N) schedule(static) if(0)
+        #pragma omp parallel for reduction(+:N) schedule(static)
         for (std::size_t i = 0; i < vec_.size(); ++i){
             if ((i & mask) != val)
                 vec_[i] = 0.;
@@ -167,7 +167,7 @@ public:
         }
         // re-normalize
         N = 1./std::sqrt(N);
-        #pragma omp parallel for schedule(static) if(0)
+        #pragma omp parallel for schedule(static)
         for (std::size_t i = 0; i < vec_.size(); ++i)
             vec_[i] *= N;
     }
@@ -272,21 +272,22 @@ public:
     calc_type get_expectation_value(TermsDict const& td, std::vector<unsigned> const& ids){
         run();
         calc_type expectation = 0.;
-        auto current_state = vec_;
+        const auto current_state = vec_;
         for (auto const& term : td){
             auto const& coefficient = term.second;
             apply_term(term.first, ids, {});
             calc_type delta = 0.;
-            #pragma omp parallel for reduction(+:delta) schedule(static) if(0)
+            #pragma omp parallel for reduction(+:delta) schedule(static)
             for (std::size_t i = 0; i < vec_.size(); ++i){
                 auto const a1 = std::real(current_state[i]);
                 auto const b1 = -std::imag(current_state[i]);
                 auto const a2 = std::real(vec_[i]);
                 auto const b2 = std::imag(vec_[i]);
                 delta += a1 * a2 - b1 * b2;
+                // reset vec_
+                vec_[i] = current_state[i];
             }
             expectation += coefficient * delta;
-            vec_ = current_state;
         }
         return expectation;
     }
