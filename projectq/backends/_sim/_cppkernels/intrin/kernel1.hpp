@@ -178,21 +178,44 @@ void kernel(V &psi, unsigned id0, M const& m, std::size_t ctrlmask)
     else // at least 8
     {
       const std::size_t nInner = d0/8;
-#pragma omp for collapse(2) schedule(static)
-      for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
-        for (std::size_t iInner = 0; iInner < nInner; iInner++)
+      if( nOuter > nInner )
+      {
+#pragma omp for schedule(static)
+        for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
+          for (std::size_t iInner = 0; iInner < nInner; iInner++)
+          {
+            std::size_t i0 = iOuter * 2*d0;
+            std::size_t i1 = iInner * 8;
+            kernel_core_unroll2(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            kernel_core_unroll2(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            kernel_core_unroll2(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            kernel_core_unroll2(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          }
+      }
+      else // nInner > nOuter
+      {
+        for (std::size_t iOuter = 0; iOuter < nOuter; iOuter++)
         {
-          std::size_t i0 = iOuter * 2*d0;
-          std::size_t i1 = iInner * 8;
-          kernel_core_unroll2(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          //kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core_unroll2(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          //kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core_unroll2(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          //kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          kernel_core_unroll2(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
-          //kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+#pragma omp for schedule(static) nowait
+          for (std::size_t iInner = 0; iInner < nInner; iInner++)
+          {
+            std::size_t i0 = iOuter * 2*d0;
+            std::size_t i1 = iInner * 8;
+            kernel_core_unroll2(psi, i0+i1+0, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+1, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            kernel_core_unroll2(psi, i0+i1+2, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+3, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            kernel_core_unroll2(psi, i0+i1+4, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+5, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            kernel_core_unroll2(psi, i0+i1+6, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+            //kernel_core(psi, i0+i1+7, d0, tmp_m0, tmp_m1, tmp_m2, tmp_m3);
+          }
         }
+      }
     }
   }
   else
